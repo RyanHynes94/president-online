@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>President</title>
+<style>
+:root{--bg:#f4f1ea;--felt:#2f6b4f;--ink:#1d1d1b;--card:#fffdf7;--red:#c0392b;--acc:#e8b43c;--mut:#6b6a63;--panel:rgba(255,255,255,.14);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root{--bg:#16181a;--felt:#1f4a38;--ink:#eee;--card:#f3efe4;--mut:#aaa}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
+.wrap{max-width:720px;margin:0 auto;padding:12px}
+h1{font-size:20px;margin:4px 0 8px;display:flex;justify-content:space-between;align-items:baseline}
+h1 small{font-size:12px;font-weight:400;color:var(--mut)}
+.table{background:var(--felt);border-radius:16px;padding:14px;color:#fff}
+.opps{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px}
+.opp{background:var(--panel);border-radius:10px;padding:8px;text-align:center;font-size:12px;border:2px solid transparent}
+.opp.turn{border-color:var(--acc)}
+.opp b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.off{opacity:.5}
+.pile{min-height:120px;display:flex;align-items:center;justify-content:center;gap:4px;margin:12px 0;flex-wrap:wrap}
+.pile .empty{opacity:.7;font-size:14px}
+.card{width:46px;height:66px;background:var(--card);color:#222;border-radius:7px;border:1px solid #0003;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;font-size:17px;line-height:1.1;flex:none;user-select:none}
+.card.r{color:var(--red)}
+.hand{display:flex;overflow-x:auto;padding:16px 4px 6px}
+.hand .card{cursor:pointer;margin-left:-14px;transition:transform .1s;box-shadow:-2px 0 4px #0002}
+.hand .card:first-child{margin-left:0}
+.hand .card.sel{transform:translateY(-12px);outline:3px solid var(--acc)}
+.msg{text-align:center;font-size:14px;min-height:20px}
+.err{text-align:center;color:#ffb4a8;font-size:13px;min-height:18px;margin-top:4px}
+.bar{display:flex;gap:8px;justify-content:center;margin-top:8px;flex-wrap:wrap}
+button{font:inherit;font-weight:600;padding:10px 20px;border-radius:10px;border:0;background:var(--acc);color:#222;cursor:pointer}
+button.sec{background:var(--panel);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+input{font:inherit;padding:10px;border-radius:10px;border:0;width:100%;margin:4px 0}
+.code{font-size:44px;letter-spacing:8px;text-align:center;font-weight:800;margin:8px 0}
+.list{margin:10px 0}.list div{background:var(--panel);border-radius:8px;padding:8px 12px;margin:4px 0}
+.res{background:var(--panel);border-radius:10px;padding:10px;margin-top:8px;text-align:center}
+.log{font-size:12px;color:var(--mut);margin-top:10px}
+.help{font-size:12px;color:var(--mut);margin-top:10px;line-height:1.5}
+.center{text-align:center}
+</style></head><body><div class="wrap">
+<h1>President <small id="rd"></small></h1>
+<div class="table" id="app"></div>
+<div class="log" id="log"></div>
+<div class="help">Play the same number of cards as the pile at equal or higher rank, or lead any set. Order, low to high: 3 4 5 6 7 8 9 10 J Q K A 2. A 2 clears the pile. First out is President, last is Scum. Between rounds, Scum swaps their best card for President’s worst.</div>
+</div>
+<script>
+const RN=['3','4','5','6','7','8','9','10','J','Q','K','A','2'],SU=['♣','♦','♥','♠'];
+let ws,S=null,conn=false,tries=0,err='',sel=new Set();
+const $=id=>document.getElementById(id),app=$('app');
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tx=o=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))};
+const ls=(k,v)=>{try{if(v===undefined)return localStorage.getItem(k);v===null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch{}};
+const card=(id,x='')=>{const s=id&3;return `<div class="card ${s==1||s==2?'r':''} ${x}" data-id="${id}"><span>${RN[id>>2]}</span><span>${SU[s]}</span></div>`};
+function connect(){
+  ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+  ws.onopen=()=>{conn=true;tries=0;const c=ls('pres_room'),t=ls('pres_token');if(c&&t)tx({t:'join',code:c,token:t});render()};
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.t==='joined'){ls('pres_room',m.code);ls('pres_token',m.token);err=''}
+    else if(m.t==='state'){S=m;err='';sel=new Set([...sel].filter(i=>m.hand.includes(i)));if(m.turn!==m.me)sel.clear()}
+    else if(m.t==='error'){err=m.msg;if(!S&&/not found|started|full/.test(m.msg)){ls('pres_room',null);ls('pres_token',null)}}
+    else if(m.t==='left'){S=null;sel.clear()}
+    render();
+  };
+  ws.onclose=()=>{conn=false;render();setTimeout(connect,Math.min(1000*2**tries++,8000))};
+}
+setInterval(()=>tx({t:'ping'}),25000);
+const legal=ids=>{if(!ids.length)return false;const r=ids[0]>>2;if(ids.some(i=>i>>2!==r))return false;return S.pile?ids.length===S.pile.n&&r>=S.pile.r:true};
+function render(){
+  const nv=$('nm')?.value,cv=$('cd')?.value;
+  $('rd').textContent=S&&S.phase!=='lobby'?`Room ${S.code} · Round ${S.round}`:'';
+  $('log').innerHTML=S&&S.log?S.log.map(l=>`<div>${esc(l)}</div>`).join(''):'';
+  const status=conn?'':'<div class="err">Connecting… (a sleeping server can take up to a minute to wake)</div>';
+  if(!S){
+    const q=new URLSearchParams(location.search).get('room')||'';
+    app.innerHTML=`<div class="center"><input id="nm" placeholder="Your name" maxlength="16" value="${esc(ls('pres_name')||'')}">
+    <div class="bar"><button data-act="create">Create room</button></div>
+    <p style="opacity:.8;margin:14px 0 4px">or join a friend’s room</p>
+    <input id="cd" placeholder="Room code" maxlength="4" style="text-transform:uppercase;text-align:center" value="${esc(q.toUpperCase())}">
+    <div class="bar"><button class="sec" data-act="join">Join room</button></div></div><div class="err">${esc(err)}</div>${status}`;
+    if(nv!==undefined)$('nm').value=nv;if(cv!==undefined)$('cd').value=cv;return;
+  }
+  if(S.phase==='lobby'){
+    app.innerHTML=`<div class="center" style="opacity:.8">Room code</div><div class="code">${S.code}</div>
+    <div class="bar"><button class="sec" data-act="copy">Copy invite link</button></div>
+    <div class="list">${S.players.map((p,i)=>`<div>${esc(p.name)}${i===S.me?' (you)':''}</div>`).join('')}</div>
+    <div class="center" style="font-size:13px;opacity:.8">${S.players.length} of 6 players · need at least 3</div>
+    <div class="bar">${S.host?`<button data-act="start" ${S.players.length<3?'disabled':''}>Start game</button>`:'<span>Waiting for the host to start…</span>'}<button class="sec" data-act="leave">Leave</button></div>
+    <div class="err">${esc(err)}</div>${status}`;return;
+  }
+  const n=S.players.length,mine=S.turn===S.me&&S.phase==='playing',me=S.players[S.me];
+  let opps='';for(let i=1;i<n;i++){const q=(S.me+i)%n,p=S.players[q];
+    opps+=`<div class="opp ${S.turn===q&&S.phase==='playing'?'turn':''} ${p.online?'':'off'}"><b>${esc(p.name)}</b>${p.out?'Out · '+p.title:p.count+' cards'}${p.passed&&!p.out?' · passed':''}${p.online?'':' · offline'}</div>`}
+  const pl=S.pile;
+  const msg=S.phase==='over'?'Round over':me.out?'You are out. Watching the rest…':mine?(pl?`Match or beat ${pl.n>1?pl.n+'× ':''}${RN[pl.r]}, or pass`:'Your lead'):`${esc(S.players[S.turn].name)} is thinking…`;
+  const res=S.phase==='over'?`<div class="res">${S.ranks.map((x,i)=>`<div>${i+1}. ${esc(x.name)} · ${x.title}</div>`).join('')}<div class="bar">${S.host?'<button data-act="next">Next round</button>':'<span>Waiting for host…</span>'}</div></div>`:'';
+  app.innerHTML=`<div class="opps">${opps}</div>
+  <div class="pile">${pl?pl.cards.map(c=>card(c)).join('')+`<span style="font-size:12px;margin-left:8px">by ${esc(S.players[pl.by].name)}</span>`:'<span class="empty">Pile empty. Lead anything.</span>'}</div>
+  <div class="msg">${msg}</div>
+  <div class="hand">${S.hand.map(c=>card(c,sel.has(c)?'sel':'')).join('')}</div>
+  <div class="bar"><button data-act="play" ${mine&&legal([...sel])?'':'disabled'}>Play</button><button class="sec" data-act="pass" ${mine&&pl?'':'disabled'}>Pass</button><button class="sec" data-act="leave">Leave</button></div>
+  <div class="err">${esc(err)}</div>${res}${status}`;
+}
+app.onclick=e=>{
+  const c=e.target.closest('.hand .card');
+  if(c&&S&&S.turn===S.me&&S.phase==='playing'){const id=+c.dataset.id;sel.has(id)?sel.delete(id):sel.add(id);err='';render();return}
+  const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;err='';
+  if(a==='create'||a==='join'){
+    const name=($('nm').value||'').trim()||'Player';ls('pres_name',name);
+    a==='create'?tx({t:'create',name}):tx({t:'join',name,code:$('cd').value});
+  }
+  else if(a==='start')tx({t:'start'});
+  else if(a==='next')tx({t:'next'});
+  else if(a==='play'){tx({t:'play',ids:[...sel]});sel.clear()}
+  else if(a==='pass')tx({t:'pass'});
+  else if(a==='leave'){tx({t:'leave'});ls('pres_room',null);ls('pres_token',null);S=null;sel.clear();render()}
+  else if(a==='copy'){const u=location.origin+'/?room='+S.code;(navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>{b.textContent='Copied!'}).catch(()=>{prompt('Copy this link',u)})}
+  if(a==='create'||a==='join')render();
+};
+render();connect();
+</script></body></html>
